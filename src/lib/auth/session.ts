@@ -1,7 +1,6 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import {
-  generateSessionToken,
   hashToken,
   createSession,
   getSessionAndUser,
@@ -9,6 +8,7 @@ import {
   UserRecord,
 } from '@/lib/db'
 import { createClient as createServerSupabase, isSupabaseConfigured } from '@/lib/supabase/server'
+import { signSessionToken, verifySessionToken } from '@/lib/auth/token'
 
 export const SESSION_COOKIE_NAME = 'conote_session'
 export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60 // 30 days
@@ -44,21 +44,46 @@ export async function getCurrentUser(): Promise<UserRecord | null> {
     }
   }
 
-  // 2. Fallback to local session cookie if running locally or offline
+  // 2. Check local/fallback session cookie
   const cookieStore = await cookies()
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
 
   if (!token) return null
 
+  // A. Fast, reliable stateless cryptographic token verification
+  const payload = await verifySessionToken(token)
+  if (payload) {
+    return {
+      id: payload.sub,
+      google_sub: `local:${payload.email}`,
+      email: payload.email,
+      email_verified: true,
+      name: payload.name,
+      avatar_url: payload.avatar_url || null,
+      created_at: new Date(payload.iat * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+      last_active_at: new Date().toISOString(),
+      deleted_at: null,
+    }
+  }
+
+  // B. Fallback for legacy database tokens
   try {
     const tokenHash = hashToken(token)
     const result = await getSessionAndUser(tokenHash)
-    if (!result) return null
-    return result.user
+    if (result?.user) {
+      return result.user
+    }
   } catch (err) {
     console.error('[getCurrentUser Local Session Error]', err)
-    return null
   }
+
+  // If token is invalid or expired, clear it to prevent redirect loops
+  try {
+    cookieStore.delete(SESSION_COOKIE_NAME)
+  } catch {}
+
+  return null
 }
 
 export async function requireAuth(): Promise<UserRecord> {
@@ -69,15 +94,30 @@ export async function requireAuth(): Promise<UserRecord> {
   return user
 }
 
-export async function createAndSetSession(userId: string): Promise<string> {
-  const rawToken = generateSessionToken()
-  const tokenHash = hashToken(rawToken)
+export async function createAndSetSession(
+  userId: string,
+  userDetails?: { email: string; name: string; avatar_url?: string | null }
+): Promise<string> {
+  const token = await signSessionToken(
+    {
+      sub: userId,
+      email: userDetails?.email || 'user@notebook.app',
+      name: userDetails?.name || 'Notebook User',
+      avatar_url: userDetails?.avatar_url || null,
+    },
+    SESSION_MAX_AGE_SECONDS
+  )
+
+  const tokenHash = hashToken(token)
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000)
 
-  await createSession(userId, tokenHash, expiresAt)
+  // Best-effort database session persistence
+  await createSession(userId, tokenHash, expiresAt).catch((err) => {
+    console.warn('[createSession DB non-fatal warning]', err?.message)
+  })
 
   const cookieStore = await cookies()
-  cookieStore.set(SESSION_COOKIE_NAME, rawToken, {
+  cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -86,7 +126,7 @@ export async function createAndSetSession(userId: string): Promise<string> {
     expires: expiresAt,
   })
 
-  return rawToken
+  return token
 }
 
 export async function clearSession(): Promise<void> {

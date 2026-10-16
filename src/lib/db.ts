@@ -23,14 +23,18 @@ const globalForDb = globalThis as unknown as {
 
 function getPool(): Pool {
   if (!globalForDb.conotePool) {
+    const isSupabase =
+      connectionString.includes('supabase.co') ||
+      connectionString.includes('pooler.supabase.com')
     globalForDb.conotePool = new Pool({
       connectionString: connectionString || 'postgresql://postgres:postgres@localhost:5432/conote',
       ssl:
-        process.env.NODE_ENV === 'production' && !connectionString.includes('localhost')
+        isSupabase ||
+        (process.env.NODE_ENV === 'production' && !connectionString.includes('localhost'))
           ? { rejectUnauthorized: false }
           : false,
-      max: 20,
-      idleTimeoutMillis: 30000,
+      max: 5,
+      idleTimeoutMillis: 15000,
       connectionTimeoutMillis: 5000,
     })
 
@@ -306,6 +310,21 @@ export async function seedStarterNotebooks(userId: string): Promise<void> {
   try {
     const check = await query(`SELECT id FROM public.notebooks WHERE owner_id = $1 LIMIT 1`, [userId])
     if (check.rows.length > 0) return
+
+    // Ensure profiles and users row exists for foreign key constraints
+    await query(
+      `INSERT INTO public.profiles (id, name, email, updated_at, last_active_at)
+       VALUES ($1, 'Notebook User', 'user@notebook.app', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [userId]
+    ).catch(() => {})
+
+    await query(
+      `INSERT INTO public.users (id, google_sub, email, name, updated_at, last_active_at)
+       VALUES ($1, 'user:' || $1, 'user@notebook.app', 'Notebook User', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [userId]
+    ).catch(() => {})
 
     // 1. Computer Science
     const csRes = await query<{ id: string }>(

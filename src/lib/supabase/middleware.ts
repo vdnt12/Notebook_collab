@@ -10,7 +10,12 @@ export async function updateSession(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
-  if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('your-project')) {
+  if (
+    !supabaseUrl ||
+    !supabaseKey ||
+    supabaseUrl.includes('your-project') ||
+    supabaseUrl.includes('placeholder')
+  ) {
     return supabaseResponse
   }
 
@@ -34,7 +39,9 @@ export async function updateSession(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
 
     // 1. Unauthenticated users trying to access protected routes -> redirect to /login
-    if (!user && !isAuthCallback && !isLoginPage) {
+    // Only redirect if they also do not have a local session cookie
+    const hasLocalSession = Boolean(request.cookies.get('conote_session')?.value)
+    if (!user && !hasLocalSession && !isAuthCallback && !isLoginPage) {
       const url = request.nextUrl.clone()
       url.pathname = '/login'
       return NextResponse.redirect(url)

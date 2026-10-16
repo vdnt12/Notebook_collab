@@ -27,7 +27,11 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await upsertLocalUser({ email, name })
-    await createAndSetSession(user.id)
+    await createAndSetSession(user.id, {
+      email: user.email,
+      name: user.name,
+      avatar_url: user.avatar_url,
+    })
 
     return NextResponse.json({
       success: true,

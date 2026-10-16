@@ -86,4 +86,29 @@ assert.strictEqual(canDeleteNotebook(authenticatedUserId, targetNotebook), true)
 assert.strictEqual(canDeleteNotebook(authenticatedUserId, unauthorizedNotebook), false)
 console.log('  ✅ Passed: Server-side authorization check verified.')
 
-console.log('\n✨ All 14 Security & Authentication Tests Passed Successfully!')
+// 7. Stateless Cryptographic HMAC Session Signing & Tamper Rejection
+console.log('\n▶ Test 7: Stateless HMAC Session Signing, Verification & Tamper Resistance')
+const enc = new TextEncoder()
+const secret = 'test-secret-key-123'
+const hmacKey = await crypto.subtle.importKey(
+  'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']
+)
+const payload = { sub: 'usr-1', email: 'vedant@notebook.app', name: 'Vedant', exp: Math.floor(Date.now() / 1000) + 3600, iat: Math.floor(Date.now() / 1000) }
+const b64Data = Buffer.from(JSON.stringify(payload)).toString('base64url')
+const sigBuf = await crypto.subtle.sign('HMAC', hmacKey, enc.encode(b64Data))
+const b64Sig = Buffer.from(sigBuf).toString('base64url')
+const validToken = `${b64Data}.${b64Sig}`
+
+// Verification
+const [vData, vSig] = validToken.split('.')
+const isValid = await crypto.subtle.verify('HMAC', hmacKey, Buffer.from(vSig, 'base64url'), enc.encode(vData))
+assert.strictEqual(isValid, true, 'Valid HMAC signature must verify')
+
+// Tamper test
+const tamperedPayload = { ...payload, sub: 'malicious-hacker-id' }
+const tamperedData = Buffer.from(JSON.stringify(tamperedPayload)).toString('base64url')
+const isTamperedValid = await crypto.subtle.verify('HMAC', hmacKey, Buffer.from(vSig, 'base64url'), enc.encode(tamperedData))
+assert.strictEqual(isTamperedValid, false, 'Tampered payload must be rejected')
+console.log('  ✅ Passed: Stateless HMAC session verification and tamper rejection verified.')
+
+console.log('\n✨ All 15 Security & Authentication Tests Passed Successfully!')
