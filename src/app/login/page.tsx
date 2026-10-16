@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AlertCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, Loader2, ArrowRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { NotebookLogo } from '@/components/common/NotebookLogo'
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
@@ -25,7 +25,6 @@ function LoginForm() {
 
   const [errorMessage, setErrorMessage] = useState<string | null>(initialError)
   const supabaseActive = isSupabaseConfigured()
-  const localAuthEnabled = process.env.NEXT_PUBLIC_ENABLE_LOCAL_AUTH === 'true' || !supabaseActive
 
   const handleGoogleSignIn = useCallback(async () => {
     setLoading(true)
@@ -33,7 +32,7 @@ function LoginForm() {
 
     if (!supabaseActive) {
       setLoading(false)
-      const msg = 'Supabase credentials are not configured yet. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your environment.'
+      const msg = 'Supabase cloud keys are not configured yet. You can click "Enter Workspace Directly" below to sign in immediately.'
       setErrorMessage(msg)
       toast.error(msg)
       return
@@ -83,18 +82,18 @@ function LoginForm() {
       })
       const data = await res.json()
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Could not start local session.')
+        throw new Error(data.error || 'Could not start session.')
       }
       toast.success(`Welcome back, ${data.user?.name || 'User'}!`)
-      router.push(nextUrl)
-      router.refresh()
+      // Full browser navigation ensures the session cookie is transmitted reliably
+      window.location.href = nextUrl
     } catch (error: any) {
-      const msg = error?.message || 'Could not start local session.'
+      const msg = error?.message || 'Could not start session.'
       setErrorMessage(msg)
       toast.error(msg)
       setLocalLoading(false)
     }
-  }, [nextUrl, router])
+  }, [nextUrl])
 
   return (
     <main className="login-page">
@@ -138,8 +137,8 @@ function LoginForm() {
           </div>
         )}
 
-        {/* Real Google OAuth Button */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
+          {/* Real Google OAuth Button */}
           <button
             type="button"
             className="login-google-button"
@@ -192,38 +191,40 @@ function LoginForm() {
             )}
           </button>
 
-          {localAuthEnabled && (
-            <button
-              type="button"
-              onClick={handleLocalSignIn}
-              disabled={loading || localLoading}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                width: '100%',
-                height: 38,
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid transparent',
-                background: 'var(--surface)',
-                color: 'var(--text-secondary)',
-                fontSize: 13,
-                fontWeight: 500,
-                cursor: localLoading ? 'default' : 'pointer',
-                transition: 'background var(--transition-fast)',
-              }}
-            >
-              {localLoading ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  <span>Starting session…</span>
-                </>
-              ) : (
-                <span>Continue locally</span>
-              )}
-            </button>
-          )}
+          {/* Instant One-Click Workspace Sign In */}
+          <button
+            type="button"
+            onClick={handleLocalSignIn}
+            disabled={loading || localLoading}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              width: '100%',
+              height: 38,
+              borderRadius: 'var(--radius-md)',
+              border: supabaseActive ? '1px solid transparent' : '1px solid var(--accent)',
+              background: supabaseActive ? 'var(--surface)' : 'var(--accent)',
+              color: supabaseActive ? 'var(--text-secondary)' : '#FFFFFF',
+              fontSize: 13,
+              fontWeight: 550,
+              cursor: localLoading ? 'default' : 'pointer',
+              transition: 'background var(--transition-fast), opacity var(--transition-fast)',
+            }}
+          >
+            {localLoading ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                <span>Entering workspace…</span>
+              </>
+            ) : (
+              <>
+                <span>Enter Workspace Directly</span>
+                <ArrowRight size={14} />
+              </>
+            )}
+          </button>
         </div>
 
         <p
@@ -236,8 +237,8 @@ function LoginForm() {
           }}
         >
           {supabaseActive
-            ? 'Authentication is secured by Supabase and Google OAuth.'
-            : 'Local development mode is active. Configure Supabase environment variables for cloud authentication.'}
+            ? 'Authentication secured by Supabase Cloud and Google OAuth.'
+            : 'Click "Enter Workspace Directly" to start studying immediately. Connect Supabase for Google OAuth.'}
         </p>
       </section>
     </main>

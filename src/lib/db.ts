@@ -43,7 +43,9 @@ function getPool(): Pool {
 
 async function getPGlite(): Promise<PGlite> {
   if (!globalForDb.conotePglite) {
-    const dataDir = path.join(process.cwd(), '.data', 'conote')
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY)
+    const baseDir = isServerless ? '/tmp' : process.cwd()
+    const dataDir = path.join(baseDir, '.data', 'conote')
     fs.mkdirSync(dataDir, { recursive: true })
     globalForDb.conotePglite = new PGlite(dataDir)
     await globalForDb.conotePglite.waitReady
