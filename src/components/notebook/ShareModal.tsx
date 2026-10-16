@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { X, UserPlus, Crown, Edit3, Eye, Trash2, Check } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import React, { useState } from 'react'
+import { X, UserPlus, Crown, Edit3, Eye, Trash2, Check, Link2, Copy } from 'lucide-react'
 import { getInitials } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import type { Notebook, NotebookMember, NotebookRole } from '@/types'
@@ -18,130 +17,103 @@ export function ShareModal({ notebook, members: initialMembers, onClose }: Share
   const [email, setEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'EDITOR' | 'VIEWER'>('EDITOR')
   const [loading, setLoading] = useState(false)
-  const supabase = createClient()
+  const [copiedLink, setCopiedLink] = useState(false)
 
-  async function handleInvite() {
+  const handleInvite = async () => {
     if (!email.trim()) return
     setLoading(true)
 
-    // Check if user exists
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id, name, email, avatar_url')
-      .eq('email', email.trim().toLowerCase())
-      .single()
-
-    if (!profile) {
-      toast.error('No CoNote user found with that email. They need to sign up first.')
-      setLoading(false)
-      return
-    }
-
-    // Check if already a member
-    const existing = members.find(m => m.profile?.email === profile.email)
-    if (existing || profile.id === notebook.owner_id) {
-      toast.error('This person already has access')
-      setLoading(false)
-      return
-    }
-
-    // Add to notebook_members
-    const { error } = await supabase
-      .from('notebook_members')
-      .insert({
-        notebook_id: notebook.id,
-        user_id: profile.id,
-        role: inviteRole,
+    try {
+      const res = await fetch(`/api/notebooks/${notebook.id}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), role: inviteRole }),
       })
-
-    if (error) {
-      toast.error('Failed to add collaborator')
-    } else {
-      toast.success(`${profile.name} added as ${inviteRole}`)
-      setMembers(prev => [...prev, {
-        id: Date.now().toString(),
-        notebook_id: notebook.id,
-        user_id: profile.id,
-        role: inviteRole,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        profile: profile as never,
-      }])
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add collaborator')
+      }
+      toast.success(`${data.member.profile?.name || email} added as ${inviteRole}`)
+      setMembers(prev => [...prev, data.member])
       setEmail('')
-
-      // Create notification
-      await supabase.from('notifications').insert({
-        user_id: profile.id,
-        type: 'NOTEBOOK_INVITE',
-        message: `You were added to "${notebook.name}"`,
-        metadata: { notebook_id: notebook.id, role: inviteRole },
-      })
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to add collaborator')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
-  async function handleRoleChange(memberId: string, newRole: NotebookRole | 'REMOVE') {
-    if (newRole === 'REMOVE') {
-      const { error } = await supabase.from('notebook_members').delete().eq('id', memberId)
-      if (!error) {
+  const handleRoleChange = async (memberId: string, newRole: NotebookRole | 'REMOVE') => {
+    try {
+      const res = await fetch(`/api/notebooks/${notebook.id}/members`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, role: newRole }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update access')
+      }
+      if (newRole === 'REMOVE') {
         setMembers(prev => prev.filter(m => m.id !== memberId))
         toast.success('Access removed')
+        return
       }
-      return
-    }
-
-    const { error } = await supabase
-      .from('notebook_members')
-      .update({ role: newRole })
-      .eq('id', memberId)
-
-    if (!error) {
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: newRole } : m))
+      toast.success('Access updated')
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update access')
     }
   }
 
-  const roleIcons = {
-    OWNER: <Crown size={13} style={{ color: 'hsl(var(--brand))' }} />,
-    EDITOR: <Edit3 size={13} style={{ color: '#10b981' }} />,
-    VIEWER: <Eye size={13} style={{ color: 'hsl(var(--muted))' }} />,
+  const handleCopyLink = () => {
+    if (typeof window !== 'undefined') {
+      navigator.clipboard.writeText(window.location.href)
+      setCopiedLink(true)
+      toast.success('Link copied to clipboard')
+      setTimeout(() => setCopiedLink(false), 2000)
+    }
   }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal animate-scale-in" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+      <div
+        className="modal"
+        onClick={e => e.stopPropagation()}
+        style={{ maxWidth: 460, padding: 24 }}
+      >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
-              Share "{notebook.name}"
+            <h2 style={{ fontSize: 17, fontWeight: 650, color: 'var(--text-primary)', margin: 0 }}>
+              Share &quot;{notebook.name}&quot;
             </h2>
-            <p style={{ fontSize: 13, color: 'hsl(var(--muted))' }}>
-              Add people to collaborate on this notebook
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>
+              Invite collaborators to write and read notes in real time.
             </p>
           </div>
-          <button onClick={onClose} className="btn btn-ghost btn-icon"><X size={16} /></button>
+          <button onClick={onClose} className="btn-ghost btn-icon" style={{ width: 26, height: 26 }}>
+            <X size={15} />
+          </button>
         </div>
 
-        {/* Invite */}
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 8 }}>
-            Add people
-          </label>
-          <div style={{ display: 'flex', gap: 8 }}>
+        {/* Invite Input Row (Section 20) */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
             <input
               className="input"
               type="email"
-              placeholder="Enter Google email address"
+              placeholder="Invite by email address…"
               value={email}
               onChange={e => setEmail(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleInvite()}
-              style={{ flex: 1 }}
+              style={{ flex: 1, height: 36, fontSize: 13 }}
             />
             <select
               value={inviteRole}
-              onChange={e => setInviteRole(e.target.value as 'EDITOR' | 'VIEWER')}
+              onChange={e => setInviteRole(e.target.value as any)}
               className="input"
-              style={{ width: 'auto', flexShrink: 0 }}
+              style={{ width: 'auto', height: 36, fontSize: 12.5, cursor: 'pointer' }}
             >
               <option value="EDITOR">Editor</option>
               <option value="VIEWER">Viewer</option>
@@ -149,106 +121,160 @@ export function ShareModal({ notebook, members: initialMembers, onClose }: Share
             <button
               onClick={handleInvite}
               disabled={loading || !email.trim()}
-              className="btn btn-primary"
-              style={{ flexShrink: 0 }}
+              className="btn btn-primary btn-sm"
+              style={{ height: 36, padding: '0 12px' }}
             >
-              {loading ? '…' : <UserPlus size={14} />}
+              {loading ? '…' : 'Invite'}
             </button>
           </div>
         </div>
 
-        {/* Members list */}
+        {/* People with access list (Section 20) */}
         <div>
-          <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 12 }}>
+          <div style={{
+            fontSize: 11.5,
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: 'var(--text-muted)',
+            marginBottom: 10,
+          }}>
             People with access
-          </label>
+          </div>
 
           {/* Owner */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 12,
-            padding: '8px 0', borderBottom: '1px solid hsl(var(--border))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 0',
+            borderBottom: '1px solid var(--border)',
           }}>
-            {notebook.owner?.avatar_url ? (
-              <img src={notebook.owner.avatar_url} alt="" style={{ width: 36, height: 36, borderRadius: '50%' }} />
-            ) : (
-              <div style={{
-                width: 36, height: 36, borderRadius: '50%',
-                background: 'hsl(var(--brand))',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'white', fontSize: 13, fontWeight: 700,
-              }}>
-                {getInitials(notebook.owner?.name || 'O')}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {notebook.owner?.avatar_url ? (
+                <img src={notebook.owner.avatar_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
+              ) : (
+                <div style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  background: 'var(--text-primary)',
+                  color: 'var(--background)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 11,
+                  fontWeight: 650,
+                }}>
+                  {getInitials(notebook.owner?.name || 'O')}
+                </div>
+              )}
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 550, color: 'var(--text-primary)' }}>
+                  {notebook.owner?.name || 'Owner'}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  {notebook.owner?.email}
+                </div>
               </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 500 }}>{notebook.owner?.name}</div>
-              <div style={{ fontSize: 12, color: 'hsl(var(--muted))' }}>{notebook.owner?.email}</div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: 'hsl(var(--brand))' }}>
-              <Crown size={12} /> Owner
-            </div>
+
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+              Owner
+            </span>
           </div>
 
           {/* Members */}
           {members.map(member => (
-            <div key={member.id} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 0', borderBottom: '1px solid hsl(var(--border))',
-            }}>
-              {member.profile?.avatar_url ? (
-                <img src={member.profile.avatar_url} alt="" style={{ width: 36, height: 36, borderRadius: '50%' }} />
-              ) : (
-                <div style={{
-                  width: 36, height: 36, borderRadius: '50%',
-                  background: 'hsl(215 20% 55%)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'white', fontSize: 13, fontWeight: 700,
-                }}>
-                  {getInitials(member.profile?.name || 'U')}
+            <div
+              key={member.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 0',
+                borderBottom: '1px solid var(--border)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {member.profile?.avatar_url ? (
+                  <img src={member.profile.avatar_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
+                ) : (
+                  <div style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    background: 'var(--surface-hover)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 11,
+                    fontWeight: 600,
+                  }}>
+                    {getInitials(member.profile?.name || 'U')}
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {member.profile?.name || 'Collaborator'}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    {member.profile?.email}
+                  </div>
                 </div>
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 500 }}>{member.profile?.name}</div>
-                <div style={{ fontSize: 12, color: 'hsl(var(--muted))' }}>{member.profile?.email}</div>
               </div>
+
               <select
                 value={member.role}
-                onChange={e => handleRoleChange(member.id, e.target.value as NotebookRole | 'REMOVE')}
+                onChange={e => handleRoleChange(member.id, e.target.value as any)}
                 style={{
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: 6,
-                  padding: '4px 8px',
-                  fontSize: 12.5,
-                  background: 'hsl(var(--surface))',
-                  color: 'hsl(var(--foreground))',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '3px 6px',
+                  fontSize: 12,
+                  background: 'var(--background)',
+                  color: 'var(--text-primary)',
                   cursor: 'pointer',
+                  outline: 'none',
                 }}
               >
                 <option value="EDITOR">Editor</option>
                 <option value="VIEWER">Viewer</option>
-                <option value="REMOVE">Remove access</option>
+                <option value="REMOVE">Remove</option>
               </select>
             </div>
           ))}
 
           {members.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '24px', color: 'hsl(var(--muted))', fontSize: 13 }}>
-              No collaborators yet. Add someone above.
+            <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: 12.5 }}>
+              No other collaborators yet.
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid hsl(var(--border))' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            fontSize: 12.5, color: 'hsl(var(--muted))',
-            background: 'hsl(var(--surface))',
-            padding: '8px 12px', borderRadius: 8,
-          }}>
-            <span>🔒</span>
-            <span>Only authenticated users with access can open this notebook</span>
-          </div>
+        {/* Copy Link Footer */}
+        <div style={{
+          marginTop: 20,
+          paddingTop: 14,
+          borderTop: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <button
+            onClick={handleCopyLink}
+            className="btn btn-secondary btn-sm"
+            style={{ gap: 6, fontSize: 12 }}
+          >
+            {copiedLink ? <Check size={13} style={{ color: 'var(--success)' }} /> : <Copy size={13} />}
+            <span>{copiedLink ? 'Link copied' : 'Copy link'}</span>
+          </button>
+
+          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+            🔒 Private to notebook members
+          </span>
         </div>
       </div>
     </div>

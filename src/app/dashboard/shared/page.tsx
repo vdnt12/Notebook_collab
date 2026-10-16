@@ -20,7 +20,7 @@ export default async function SharedPage() {
   let sharedNotebooks: Notebook[] = []
 
   try {
-    const res = await query(
+    const res = await query<any>(
       `
       SELECT
         n.*,
@@ -34,7 +34,7 @@ export default async function SharedPage() {
       [user.id]
     )
 
-    sharedNotebooks = (res.rows || []).map((nb) => ({
+    sharedNotebooks = (res.rows || []).map((nb: any) => ({
       ...nb,
       user_role: nb.user_role,
       is_starred: Boolean(nb.is_starred),

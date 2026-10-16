@@ -1,22 +1,24 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Search, BookOpen, Plus, Moon, Sun, Star, Users, Trash2, Home, ArrowRight, X
+  Search, Plus, Moon, Sun, Star, Trash2, Home, ArrowRight, X,
+  FileText, BookOpen, Settings, UserPlus
 } from 'lucide-react'
 import { useTheme } from '@/components/providers/ThemeProvider'
+import type { Topic, Notebook } from '@/types'
 
 interface CommandPaletteProps {
   onOpenCreateNotebook?: () => void
 }
 
-interface PaletteItem {
+interface SearchItem {
   id: string
-  category: string
-  label: string
-  desc?: string
-  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>
+  type: 'command' | 'topic' | 'notebook'
+  title: string
+  subtitle?: string
+  icon?: string | React.ComponentType<{ size?: number; className?: string }>
   action: () => void
 }
 
@@ -24,11 +26,19 @@ export function CommandPalette({ onOpenCreateNotebook }: CommandPaletteProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [remoteResults, setRemoteResults] = useState<{ notebooks: any[]; topics: any[] }>({
+    notebooks: [],
+    topics: [],
+  })
+
   const router = useRouter()
   const { setTheme, resolvedTheme } = useTheme()
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Listen for Cmd+K / Ctrl+K
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault()
       setIsOpen(prev => !prev)
     }
@@ -42,57 +52,170 @@ export function CommandPalette({ onOpenCreateNotebook }: CommandPaletteProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
-  const items: PaletteItem[] = [
-    // Actions
+  // Fetch search results from backend
+  const fetchSearch = useCallback(async (q: string) => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
+      const data = await res.json()
+      if (res.ok) {
+        setRemoteResults({
+          notebooks: data.notebooks || [],
+          topics: data.topics || [],
+        })
+      }
+    } catch (err) {
+      console.error('[CommandPalette search Error]', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen) {
+      setQuery('')
+      setSelectedIndex(0)
+      return
+    }
+
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    searchTimeoutRef.current = setTimeout(() => {
+      fetchSearch(query)
+    }, 100)
+
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    }
+  }, [query, isOpen, fetchSearch])
+
+  // Quick Action Commands (Section 24)
+  const commands: SearchItem[] = [
     {
-      id: 'act-new-nb',
-      category: 'Actions',
-      label: 'Create New Notebook',
+      id: 'cmd-new-notebook',
+      type: 'command',
+      title: 'Create notebook',
+      subtitle: 'New workspace notebook',
       icon: Plus,
       action: () => {
         setIsOpen(false)
-        if (onOpenCreateNotebook) onOpenCreateNotebook()
+        if (onOpenCreateNotebook) {
+          onOpenCreateNotebook()
+        } else {
+          router.push('/dashboard')
+        }
       },
     },
     {
-      id: 'act-toggle-theme',
-      category: 'Actions',
-      label: resolvedTheme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode',
+      id: 'cmd-toggle-theme',
+      type: 'command',
+      title: resolvedTheme === 'dark' ? 'Toggle light mode' : 'Toggle dark mode',
+      subtitle: 'Change interface appearance',
       icon: resolvedTheme === 'dark' ? Sun : Moon,
       action: () => {
         setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
         setIsOpen(false)
       },
     },
-    // Navigation
-    { id: 'nav-home', category: 'Navigation', label: 'Dashboard', icon: Home, action: () => { router.push('/dashboard'); setIsOpen(false) } },
-    { id: 'nav-notebooks', category: 'Navigation', label: 'My Notebooks', icon: BookOpen, action: () => { router.push('/dashboard/notebooks'); setIsOpen(false) } },
-    { id: 'nav-shared', category: 'Navigation', label: 'Shared With Me', icon: Users, action: () => { router.push('/dashboard/shared'); setIsOpen(false) } },
-    { id: 'nav-starred', category: 'Navigation', label: 'Starred Notebooks', icon: Star, action: () => { router.push('/dashboard/starred'); setIsOpen(false) } },
-    { id: 'nav-trash', category: 'Navigation', label: 'Trash', icon: Trash2, action: () => { router.push('/dashboard/trash'); setIsOpen(false) } },
+    {
+      id: 'cmd-home',
+      type: 'command',
+      title: 'Go to desk',
+      subtitle: 'Continue recent work',
+      icon: Home,
+      action: () => {
+        router.push('/dashboard')
+        setIsOpen(false)
+      },
+    },
+    {
+      id: 'cmd-favorites',
+      type: 'command',
+      title: 'Open favorites',
+      subtitle: 'Starred notebooks and notes',
+      icon: Star,
+      action: () => {
+        router.push('/dashboard/starred')
+        setIsOpen(false)
+      },
+    },
+    {
+      id: 'cmd-settings',
+      type: 'command',
+      title: 'Open settings',
+      subtitle: 'Account & preferences',
+      icon: Settings,
+      action: () => {
+        router.push('/dashboard/settings')
+        setIsOpen(false)
+      },
+    },
+    {
+      id: 'cmd-trash',
+      type: 'command',
+      title: 'Open trash',
+      subtitle: 'Restore deleted notes',
+      icon: Trash2,
+      action: () => {
+        router.push('/dashboard/trash')
+        setIsOpen(false)
+      },
+    },
   ]
 
-  const filtered = query.trim()
-    ? items.filter(it => it.label.toLowerCase().includes(query.toLowerCase()) || (it.desc && it.desc.toLowerCase().includes(query.toLowerCase())))
-    : items
+  // Filter commands if matching query
+  const matchingCommands = query.trim()
+    ? commands.filter(c =>
+        c.title.toLowerCase().includes(query.toLowerCase()) ||
+        (c.subtitle && c.subtitle.toLowerCase().includes(query.toLowerCase()))
+      )
+    : commands.slice(0, 3)
 
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [query])
+  // Map remote topic results
+  const topicItems: SearchItem[] = remoteResults.topics.map(t => ({
+    id: `topic-${t.id}`,
+    type: 'topic',
+    title: t.title,
+    subtitle: t.notebook_name ? `in ${t.notebook_name}` : undefined,
+    icon: t.icon || '📄',
+    action: () => {
+      router.push(`/notebook/${t.notebook_id}?topicId=${t.id}`)
+      setIsOpen(false)
+    },
+  }))
 
-  const handleSelect = (index: number) => {
-    if (filtered[index]) {
-      filtered[index].action()
+  // Map remote notebook results
+  const notebookItems: SearchItem[] = remoteResults.notebooks.map(nb => ({
+    id: `nb-${nb.id}`,
+    type: 'notebook',
+    title: nb.name,
+    subtitle: nb.description || 'Notebook',
+    icon: nb.icon || '📓',
+    action: () => {
+      router.push(`/notebook/${nb.id}`)
+      setIsOpen(false)
+    },
+  }))
+
+  // Combined item list
+  const allItems: SearchItem[] = [
+    ...topicItems,
+    ...notebookItems,
+    ...matchingCommands,
+  ]
+
+  const handleSelect = (idx: number) => {
+    if (allItems[idx]) {
+      allItems[idx].action()
     }
   }
 
-  const handleListKeyDown = (e: React.KeyboardEvent) => {
+  const handleInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSelectedIndex(prev => (prev + 1) % filtered.length)
+      setSelectedIndex(prev => (prev + 1) % Math.max(1, allItems.length))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setSelectedIndex(prev => (prev - 1 + filtered.length) % filtered.length)
+      setSelectedIndex(prev => (prev - 1 + allItems.length) % Math.max(1, allItems.length))
     } else if (e.key === 'Enter') {
       e.preventDefault()
       handleSelect(selectedIndex)
@@ -103,112 +226,276 @@ export function CommandPalette({ onOpenCreateNotebook }: CommandPaletteProps) {
 
   return (
     <div
-      className="modal-overlay animate-fade-in"
+      className="modal-overlay"
       onClick={e => e.target === e.currentTarget && setIsOpen(false)}
-      style={{ zIndex: 999 }}
+      style={{ zIndex: 1000 }}
     >
       <div
-        className="modal animate-scale-in"
-        style={{ maxWidth: 580, padding: 0, overflow: 'hidden', borderRadius: 16 }}
+        className="modal"
+        style={{
+          maxWidth: 540,
+          padding: 0,
+          borderRadius: 12,
+          overflow: 'hidden',
+          boxShadow: 'var(--shadow-menu)',
+        }}
       >
-        {/* Search header */}
+        {/* Search Input Bar (Section 23) */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          padding: '14px 18px', borderBottom: '1px solid hsl(var(--border))',
-          background: 'hsl(var(--surface))',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--background)',
         }}>
-          <Search size={18} style={{ color: 'hsl(var(--muted))', flexShrink: 0 }} />
+          <Search size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <input
             value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={handleListKeyDown}
-            placeholder="Search commands, navigate… (⌘K)"
+            onChange={e => {
+              setQuery(e.target.value)
+              setSelectedIndex(0)
+            }}
+            onKeyDown={handleInputKeyDown}
+            placeholder="Search notes, notebooks, commands…"
             autoFocus
             style={{
-              flex: 1, border: 'none', background: 'transparent',
-              outline: 'none', fontSize: 14.5, color: 'hsl(var(--foreground))',
+              flex: 1,
+              border: 'none',
+              background: 'transparent',
+              outline: 'none',
+              fontSize: 14.5,
+              color: 'var(--text-primary)',
               fontFamily: 'inherit',
             }}
           />
-          <button
-            onClick={() => setIsOpen(false)}
-            className="btn-ghost"
-            style={{ padding: 4, borderRadius: 6 }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* Results list */}
-        <div
-          style={{ maxHeight: 360, overflowY: 'auto', padding: '8px' }}
-        >
-          {filtered.length === 0 ? (
-            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'hsl(var(--muted))', fontSize: 13.5 }}>
-              No matching commands found.
-            </div>
-          ) : (
-            filtered.map((item, idx) => {
-              const Icon = item.icon
-              const isSelected = idx === selectedIndex
-              return (
-                <div
-                  key={item.id}
-                  onClick={() => handleSelect(idx)}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 12px', borderRadius: 8,
-                    cursor: 'pointer',
-                    background: isSelected ? 'hsl(var(--brand) / 0.12)' : 'transparent',
-                    color: isSelected ? 'hsl(var(--brand))' : 'hsl(var(--foreground))',
-                    transition: 'all 0.1s ease',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 6,
-                      background: isSelected ? 'hsl(var(--brand) / 0.2)' : 'hsl(var(--surface-2))',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: isSelected ? 'hsl(var(--brand))' : 'hsl(var(--muted))',
-                    }}>
-                      <Icon size={15} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 13.5, fontWeight: isSelected ? 600 : 500 }}>
-                        {item.label}
-                      </div>
-                      {item.desc && (
-                        <div style={{ fontSize: 11.5, color: 'hsl(var(--muted))' }}>{item.desc}</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 11, color: 'hsl(var(--muted-light))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      {item.category}
-                    </span>
-                    {isSelected && <ArrowRight size={13} style={{ color: 'hsl(var(--brand))' }} />}
-                  </div>
-                </div>
-              )
-            })
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              className="btn-ghost"
+              style={{ padding: 2, borderRadius: 4 }}
+            >
+              <X size={14} />
+            </button>
           )}
         </div>
 
-        {/* Footer shortcuts */}
+        {/* Results List */}
+        <div style={{ maxHeight: 360, overflowY: 'auto', padding: '6px' }}>
+          {allItems.length === 0 ? (
+            <div style={{ padding: '36px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13.5 }}>
+              {loading ? 'Searching…' : 'No matching results found.'}
+            </div>
+          ) : (
+            <div>
+              {/* Note / Topics Section */}
+              {topicItems.length > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    color: 'var(--text-muted)',
+                    padding: '6px 10px 4px',
+                  }}>
+                    {query ? 'Notes' : 'Recent'}
+                  </div>
+
+                  {topicItems.map((item) => {
+                    const idx = allItems.indexOf(item)
+                    const isSelected = idx === selectedIndex
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelect(idx)}
+                        onMouseEnter={() => setSelectedIndex(idx)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '7px 10px',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer',
+                          background: isSelected ? 'var(--surface-hover)' : 'transparent',
+                          transition: 'background-color 80ms ease',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>
+                            {typeof item.icon === 'string' ? item.icon : '📄'}
+                          </span>
+                          <span style={{
+                            fontSize: 13.5,
+                            fontWeight: isSelected ? 550 : 500,
+                            color: 'var(--text-primary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {item.title}
+                          </span>
+                          {item.subtitle && (
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
+                              {item.subtitle}
+                            </span>
+                          )}
+                        </div>
+
+                        {isSelected && (
+                          <span style={{ fontSize: 11.5, color: 'var(--accent)' }}>↵ Open</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Notebooks Section */}
+              {notebookItems.length > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    color: 'var(--text-muted)',
+                    padding: '6px 10px 4px',
+                  }}>
+                    Notebooks
+                  </div>
+
+                  {notebookItems.map((item) => {
+                    const idx = allItems.indexOf(item)
+                    const isSelected = idx === selectedIndex
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelect(idx)}
+                        onMouseEnter={() => setSelectedIndex(idx)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '7px 10px',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer',
+                          background: isSelected ? 'var(--surface-hover)' : 'transparent',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>
+                            {typeof item.icon === 'string' ? item.icon : '📓'}
+                          </span>
+                          <span style={{
+                            fontSize: 13.5,
+                            fontWeight: isSelected ? 550 : 500,
+                            color: 'var(--text-primary)',
+                          }}>
+                            {item.title}
+                          </span>
+                        </div>
+
+                        {isSelected && (
+                          <span style={{ fontSize: 11.5, color: 'var(--accent)' }}>↵ Open</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Commands Section */}
+              {matchingCommands.length > 0 && (
+                <div>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    color: 'var(--text-muted)',
+                    padding: '6px 10px 4px',
+                  }}>
+                    Commands
+                  </div>
+
+                  {matchingCommands.map((item) => {
+                    const idx = allItems.indexOf(item)
+                    const isSelected = idx === selectedIndex
+                    const Icon = typeof item.icon === 'function' ? item.icon : Plus
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelect(idx)}
+                        onMouseEnter={() => setSelectedIndex(idx)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '7px 10px',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer',
+                          background: isSelected ? 'var(--surface-hover)' : 'transparent',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                          <div style={{
+                            width: 22,
+                            height: 22,
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'var(--surface)',
+                            border: '1px solid var(--border)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--text-secondary)',
+                          }}>
+                            <Icon size={12} />
+                          </div>
+                          <div>
+                            <span style={{ fontSize: 13.5, fontWeight: isSelected ? 550 : 500, color: 'var(--text-primary)' }}>
+                              {item.title}
+                            </span>
+                            {item.subtitle && (
+                              <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
+                                {item.subtitle}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {isSelected && (
+                          <ArrowRight size={12} style={{ color: 'var(--accent)' }} />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Minimal Footer (Section 23) */}
         <div style={{
-          padding: '8px 16px', background: 'hsl(var(--surface))',
-          borderTop: '1px solid hsl(var(--border))',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          fontSize: 11.5, color: 'hsl(var(--muted))',
+          padding: '8px 14px',
+          background: 'var(--surface)',
+          borderTop: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: 11.5,
+          color: 'var(--text-muted)',
         }}>
           <div style={{ display: 'flex', gap: 12 }}>
             <span><kbd style={kbdStyle}>↑</kbd> <kbd style={kbdStyle}>↓</kbd> navigate</span>
-            <span><kbd style={kbdStyle}>↵</kbd> select</span>
+            <span><kbd style={kbdStyle}>↵</kbd> open</span>
             <span><kbd style={kbdStyle}>esc</kbd> close</span>
           </div>
-          <span>CoNote Command Palette</span>
+          <span>Notebook</span>
         </div>
       </div>
     </div>
@@ -216,10 +503,9 @@ export function CommandPalette({ onOpenCreateNotebook }: CommandPaletteProps) {
 }
 
 const kbdStyle: React.CSSProperties = {
-  background: 'hsl(var(--surface-2))',
-  border: '1px solid hsl(var(--border))',
-  borderRadius: 4,
-  padding: '2px 5px',
-  fontSize: 10.5,
-  fontFamily: 'inherit',
+  background: 'var(--background)',
+  border: '1px solid var(--border)',
+  borderRadius: 3,
+  padding: '1px 4px',
+  fontSize: 10,
 }

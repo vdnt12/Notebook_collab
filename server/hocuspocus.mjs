@@ -1,5 +1,4 @@
 import { Server } from '@hocuspocus/server'
-import { Logger } from '@hocuspocus/extension-logger'
 import pkg from 'pg'
 const { Pool } = pkg
 import crypto from 'crypto'
@@ -25,9 +24,7 @@ function hashToken(token) {
 
 const server = new Server({
   port: Number(PORT),
-  extensions: [
-    new Logger(),
-  ],
+  extensions: [],
 
   async onAuthenticate(data) {
     const { token, documentName } = data

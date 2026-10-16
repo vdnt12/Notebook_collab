@@ -24,7 +24,7 @@ export default async function NotebookPage({ params }: PageProps) {
   }
 
   // Fetch notebook
-  const nbRes = await query(
+  const nbRes = await query<any>(
     `
     SELECT n.*, u.name as owner_name, u.email as owner_email, u.avatar_url as owner_avatar_url
     FROM public.notebooks n

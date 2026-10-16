@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useTheme } from '@/components/providers/ThemeProvider'
-import { createClient } from '@/lib/supabase/client'
 import { getInitials } from '@/lib/utils'
 import { Moon, Sun, Monitor, LogOut, User } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -16,11 +15,15 @@ interface SettingsPageProps {
 export function SettingsPage({ profile }: SettingsPageProps) {
   const { theme, setTheme } = useTheme()
   const router = useRouter()
-  const supabase = createClient()
 
   async function handleLogout() {
-    await supabase.auth.signOut()
-    router.push('/')
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch (err) {
+      console.error('[Logout Error]', err)
+    }
+    router.push('/login')
+    router.refresh()
     toast.success('Signed out')
   }
 
@@ -62,7 +65,7 @@ export function SettingsPage({ profile }: SettingsPageProps) {
             <div style={{ fontWeight: 600, fontSize: 16 }}>{profile?.name}</div>
             <div style={{ color: 'hsl(var(--muted))', fontSize: 14 }}>{profile?.email}</div>
             <div style={{ fontSize: 12, color: 'hsl(var(--muted-light))', marginTop: 4 }}>
-              Signed in with Google
+              {profile?.google_id?.startsWith('local:') ? 'Signed in locally' : 'Signed in with Google'}
             </div>
           </div>
         </div>

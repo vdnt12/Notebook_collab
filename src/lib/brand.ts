@@ -1,11 +1,11 @@
 export const BRAND = {
-  name: 'CoNote',
-  tagline: 'Your notebook. Everyone\'s workspace.',
-  description: 'A modern, production-grade collaborative digital notebook web application. Group ideas into notebooks, structure knowledge with topics, and collaborate in real-time.',
+  name: 'Notebook',
+  tagline: 'A digital desk for thinking and studying',
+  description: 'Clean, intelligent digital workspace for notes, knowledge structuring, and real-time collaboration.',
   icon: '📓',
-  logoText: 'C',
+  logoText: 'N',
   author: 'Vedant',
-  primaryColor: '#6366f1',
-  supportEmail: 'support@conote.app',
+  primaryColor: '#2F6FED',
+  supportEmail: 'support@notebook.app',
   githubUrl: 'https://github.com/vedant/notebook_vdnt',
 } as const

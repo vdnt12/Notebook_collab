@@ -20,7 +20,7 @@ export default async function StarredPage() {
   let starredNotebooks: Notebook[] = []
 
   try {
-    const res = await query(
+    const res = await query<any>(
       `
       SELECT
         n.*,
@@ -35,7 +35,7 @@ export default async function StarredPage() {
       [user.id]
     )
 
-    starredNotebooks = (res.rows || []).map((nb) => ({
+    starredNotebooks = (res.rows || []).map((nb: any) => ({
       ...nb,
       user_role: nb.user_role,
       is_starred: true,

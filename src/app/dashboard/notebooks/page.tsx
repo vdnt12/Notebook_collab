@@ -20,7 +20,7 @@ export default async function NotebooksPage() {
   let mappedNotebooks: Notebook[] = []
 
   try {
-    const res = await query(
+    const res = await query<any>(
       `
       SELECT
         n.*,
@@ -37,7 +37,7 @@ export default async function NotebooksPage() {
       [user.id]
     )
 
-    mappedNotebooks = (res.rows || []).map((nb) => ({
+    mappedNotebooks = (res.rows || []).map((nb: any) => ({
       ...nb,
       user_role: 'OWNER' as const,
       member_count: nb.member_count || 1,

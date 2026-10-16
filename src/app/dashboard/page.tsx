@@ -1,10 +1,11 @@
 import { requireAuth } from '@/lib/auth/session'
-import { query } from '@/lib/db'
+import { query, seedStarterNotebooks } from '@/lib/db'
 import { DashboardContent } from '@/components/dashboard/DashboardContent'
-import type { Notebook, Profile } from '@/types'
+import type { Notebook, Profile, Topic } from '@/types'
 
 export default async function DashboardPage() {
   const user = await requireAuth()
+  await seedStarterNotebooks(user.id).catch(() => {})
 
   const userProfile: Profile = {
     id: user.id,
@@ -19,9 +20,10 @@ export default async function DashboardPage() {
 
   let ownedNotebooks: Notebook[] = []
   let sharedNotebooks: Notebook[] = []
+  let recentTopics: (Topic & { notebook_name: string; notebook_icon: string })[] = []
 
   try {
-    const ownedRes = await query(
+    const ownedRes = await query<any>(
       `
       SELECT
         n.*,
@@ -38,7 +40,7 @@ export default async function DashboardPage() {
       [user.id]
     )
 
-    ownedNotebooks = (ownedRes.rows || []).map((nb) => ({
+    ownedNotebooks = (ownedRes.rows || []).map((nb: any) => ({
       ...nb,
       user_role: 'OWNER' as const,
       member_count: nb.member_count || 1,
@@ -46,7 +48,7 @@ export default async function DashboardPage() {
       is_starred: Boolean(nb.is_starred),
     }))
 
-    const sharedRes = await query(
+    const sharedRes = await query<any>(
       `
       SELECT
         n.*,
@@ -60,11 +62,39 @@ export default async function DashboardPage() {
       [user.id]
     )
 
-    sharedNotebooks = (sharedRes.rows || []).map((nb) => ({
+    sharedNotebooks = (sharedRes.rows || []).map((nb: any) => ({
       ...nb,
       user_role: nb.user_role,
       is_starred: Boolean(nb.is_starred),
     }))
+
+    const topicsRes = await query<any>(
+      `
+      SELECT
+        t.id,
+        t.title,
+        t.icon,
+        t.notebook_id,
+        t.updated_at,
+        t.created_at,
+        t.position,
+        t.created_by,
+        t.content_text,
+        n.name as notebook_name,
+        n.icon as notebook_icon
+      FROM public.topics t
+      JOIN public.notebooks n ON t.notebook_id = n.id
+      LEFT JOIN public.notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = $1
+      WHERE (n.owner_id = $1 OR nm.user_id = $1)
+        AND t.deleted_at IS NULL
+        AND n.deleted_at IS NULL
+      ORDER BY t.updated_at DESC
+      LIMIT 8
+      `,
+      [user.id]
+    )
+
+    recentTopics = topicsRes.rows || []
   } catch (err) {
     console.error('[DashboardPage Query Error]', err)
   }
@@ -80,6 +110,7 @@ export default async function DashboardPage() {
     <DashboardContent
       notebooks={ownedNotebooks}
       sharedNotebooks={sharedNotebooks}
+      recentTopics={recentTopics}
       userId={user.id}
       profile={userProfile}
       greeting={greeting}

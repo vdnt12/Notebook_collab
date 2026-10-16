@@ -30,20 +30,41 @@ export function NotebookSettingsTab({ notebook, onUpdate }: NotebookSettingsTabP
     }
   )
 
-  function handleSaveGeneral() {
+  async function handleSaveGeneral() {
     if (!isOwner) {
       toast.error('Only the notebook owner can modify settings.')
       return
     }
-    onUpdate({ name, description, icon, color, settings })
-    toast.success('Notebook settings saved!')
+    try {
+      const res = await fetch(`/api/notebooks/${notebook.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, icon, color }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save settings')
+      }
+      onUpdate({ name, description, icon, color, settings })
+      toast.success('Notebook settings saved!')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save settings')
+    }
   }
 
-  function handleArchive() {
+  async function handleArchive() {
     if (!isOwner) return
-    if (confirm(`Archive "${notebook.name}" and move to trash?`)) {
+    if (!confirm(`Archive "${notebook.name}" and move to trash?`)) return
+    try {
+      const res = await fetch(`/api/notebooks/${notebook.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to archive notebook')
+      }
       toast.success('Notebook moved to trash.')
       router.push('/dashboard')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to archive notebook')
     }
   }
 

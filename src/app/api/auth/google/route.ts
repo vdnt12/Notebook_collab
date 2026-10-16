@@ -84,8 +84,8 @@ export async function POST(request: NextRequest) {
         avatarUrl: user.avatar_url,
       },
     })
-  } catch (error: any) {
-    console.error('[Google Auth Verification Error]', error?.message || error)
+  } catch (error: unknown) {
+    console.error('[Google Auth Verification Error]', error)
     return NextResponse.json(
       { error: "We couldn't sign you in. Please try again." },
       { status: 401 }

@@ -5,12 +5,12 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { CommandPalette } from '@/components/common/CommandPalette'
 
 export const metadata: Metadata = {
-  title: 'CoNote — Collaborative Digital Notebooks',
-  description: 'Your notebook. Everyone\'s workspace. Write, organize, and collaborate in real time.',
-  keywords: 'notebook, collaboration, notes, workspace, tiptap, yjs',
+  title: 'Notebook — A Digital Desk for Thinking and Studying',
+  description: 'Clean, intelligent digital workspace for notes, knowledge structuring, and real-time collaboration.',
+  keywords: 'notebook, collaboration, notes, workspace, tiptap, yjs, study, thoughts',
   openGraph: {
-    title: 'CoNote',
-    description: 'Collaborative digital notebooks for teams and thinkers',
+    title: 'Notebook',
+    description: 'Clean digital desk for thinking and studying',
     type: 'website',
   },
 }
@@ -26,7 +26,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;650;700;800&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap"
           rel="stylesheet"
         />
       </head>
@@ -37,14 +37,16 @@ export default function RootLayout({
           <Toaster
             position="bottom-right"
             toastOptions={{
+              duration: 2600,
               style: {
-                background: 'hsl(var(--background))',
-                color: 'hsl(var(--foreground))',
-                border: '1px solid hsl(var(--border))',
+                background: 'var(--background)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border)',
                 fontFamily: 'Inter, sans-serif',
-                fontSize: '13.5px',
-                borderRadius: '10px',
-                boxShadow: 'var(--shadow-lg)',
+                fontSize: '13px',
+                borderRadius: '8px',
+                boxShadow: 'var(--shadow-menu)',
+                padding: '8px 14px',
               },
             }}
           />

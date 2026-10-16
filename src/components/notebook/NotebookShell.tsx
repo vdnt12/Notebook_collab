@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useState, useEffect } from 'react'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeft, Share2, Plus, Search, FileText, FolderOpen,
-  Activity as ActivityIcon, Settings as SettingsIcon, MoreHorizontal, Sparkles
+  Activity as ActivityIcon, Settings as SettingsIcon, MoreHorizontal,
+  ChevronRight, PanelLeft, Moon, Sun, Lock
 } from 'lucide-react'
 import { TopicList } from './TopicList'
 import { TopicEditor } from './TopicEditor'
@@ -12,9 +14,11 @@ import { ShareModal } from './ShareModal'
 import { FilesTab } from './FilesTab'
 import { ActivityTab } from './ActivityTab'
 import { NotebookSettingsTab } from './NotebookSettingsTab'
+import { NotebookLogo } from '@/components/common/NotebookLogo'
 import { getInitials } from '@/lib/utils'
-import { createClient } from '@/lib/supabase/client'
 import { DEFAULT_NOTEBOOK_SETTINGS } from '@/lib/permissions'
+import { useTheme } from '@/components/providers/ThemeProvider'
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
 import toast from 'react-hot-toast'
 import type { Notebook, Topic, NotebookMember, Profile, NotebookRole } from '@/types'
 
@@ -26,7 +30,7 @@ interface NotebookShellProps {
   userId: string
 }
 
-type NotebookTab = 'topics' | 'files' | 'activity' | 'settings'
+type NotebookTab = 'note' | 'files' | 'activity' | 'settings'
 
 export function NotebookShell({
   notebook: initialNotebook,
@@ -36,72 +40,126 @@ export function NotebookShell({
   userId,
 }: NotebookShellProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { setTheme, resolvedTheme } = useTheme()
+
   const [currentNotebook, setCurrentNotebook] = useState(initialNotebook)
-  const [activeTab, setActiveTab] = useState<NotebookTab>('topics')
   const [topics, setTopics] = useState(initialTopics)
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(initialTopics[0] || null)
+  const [onlineUsers, setOnlineUsers] = useState<Array<{ id: string; name: string; avatar_url?: string }>>([])
+  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(() => {
+    const topicIdFromUrl = searchParams.get('topicId')
+    if (topicIdFromUrl) {
+      const match = initialTopics.find(t => t.id === topicIdFromUrl)
+      if (match) return match
+    }
+    return initialTopics[0] || null
+  })
+
+  const [activeTab, setActiveTab] = useState<NotebookTab>('note')
   const [showShare, setShowShare] = useState(false)
   const [topicSearch, setTopicSearch] = useState('')
-  const supabase = createClient()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const userRole = currentNotebook.user_role || 'VIEWER'
   const canEdit = userRole === 'OWNER' || userRole === 'EDITOR'
   const settings = currentNotebook.settings || DEFAULT_NOTEBOOK_SETTINGS
 
+  // Supabase Realtime for Presence and Live Topic Updates (Section 20 & 21)
   useEffect(() => {
-    if (topics.length > 0 && !selectedTopic) {
+    if (!isSupabaseConfigured()) return
+
+    const supabase = createClient()
+    const channelName = `notebook:${currentNotebook.id}`
+    const channel = supabase.channel(channelName, {
+      config: {
+        presence: { key: userId },
+      },
+    })
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState()
+        const users: Array<{ id: string; name: string; avatar_url?: string }> = []
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((p: any) => {
+            if (p.user_id && !users.some(u => u.id === p.user_id)) {
+              users.push({
+                id: p.user_id,
+                name: p.name || 'Collaborator',
+                avatar_url: p.avatar_url || undefined,
+              })
+            }
+          })
+        })
+        setOnlineUsers(users)
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'topics',
+          filter: `notebook_id=eq.${currentNotebook.id}`,
+        },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT') {
+            setTopics(prev => {
+              if (prev.some(t => t.id === payload.new.id)) return prev
+              return [...prev, payload.new as Topic]
+            })
+          } else if (payload.eventType === 'UPDATE') {
+            setTopics(prev => prev.map(t => t.id === payload.new.id ? { ...t, ...payload.new } : t))
+            setSelectedTopic(prev => prev && prev.id === payload.new.id ? { ...prev, ...payload.new } : prev)
+          } else if (payload.eventType === 'DELETE') {
+            setTopics(prev => prev.filter(t => t.id !== payload.old.id))
+          }
+        }
+      )
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            user_id: userId,
+            name: currentUser?.name || 'User',
+            avatar_url: currentUser?.avatar_url || null,
+            online_at: new Date().toISOString(),
+          })
+        }
+      })
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentNotebook.id, userId, currentUser])
+
+  // Sync selectedTopic when searchParams change
+  useEffect(() => {
+    const topicIdFromUrl = searchParams.get('topicId')
+    if (topicIdFromUrl && topics.length > 0) {
+      const match = topics.find(t => t.id === topicIdFromUrl)
+      if (match && match.id !== selectedTopic?.id) {
+        setSelectedTopic(match)
+        setActiveTab('note')
+      }
+    } else if (!selectedTopic && topics.length > 0) {
       setSelectedTopic(topics[0])
     }
-  }, [topics, selectedTopic])
+  }, [searchParams, topics, selectedTopic])
 
-  // Realtime: listen for topic changes
-  useEffect(() => {
-    try {
-      const channel = supabase
-        .channel(`notebook-${currentNotebook.id}-topics`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'topics', filter: `notebook_id=eq.${currentNotebook.id}` },
-          (payload) => {
-            if (payload.eventType === 'INSERT') {
-              const newTopic = payload.new as Topic
-              setTopics(prev => {
-                if (prev.find(t => t.id === newTopic.id)) return prev
-                return [...prev, newTopic].sort((a, b) => a.position - b.position)
-              })
-            } else if (payload.eventType === 'UPDATE') {
-              const updated = payload.new as Topic
-              setTopics(prev => prev.map(t => t.id === updated.id ? { ...t, ...updated } : t))
-              setSelectedTopic(prev => prev?.id === updated.id ? { ...prev, ...updated } : prev)
-            } else if (payload.eventType === 'DELETE') {
-              const deleted = payload.old as Topic
-              setTopics(prev => prev.filter(t => t.id !== deleted.id))
-              setSelectedTopic(prev => prev?.id === deleted.id ? null : prev)
-            }
-          }
-        )
-        .subscribe()
-
-      return () => { supabase.removeChannel(channel) }
-    } catch {
-      // Offline fallback
-    }
-  }, [currentNotebook.id, supabase])
-
-  async function createTopic() {
+  // Instant topic creation (Section 26)
+  const createTopic = async () => {
     if (!canEdit) {
-      toast.error("You don't have permission to create topics")
+      toast.error("You don't have permission to create notes")
       return
     }
 
-    const newPosition = topics.length
+    const newPosition = Date.now()
 
     try {
       const res = await fetch(`/api/notebooks/${currentNotebook.id}/topics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: 'Untitled Topic',
+          title: 'Untitled Note',
           icon: '📄',
           position: newPosition,
         }),
@@ -109,31 +167,33 @@ export function NotebookShell({
 
       const data = await res.json()
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to create topic')
+        throw new Error(data.error || 'Failed to create note')
       }
 
       setTopics(prev => [...prev, data.topic])
       setSelectedTopic(data.topic)
-      setActiveTab('topics')
-      toast.success('New topic created!')
+      setActiveTab('note')
+      window.dispatchEvent(new CustomEvent('notebooks-updated'))
+      toast.success('Note created')
     } catch (err: any) {
-      toast.error(err.message || 'Failed to create topic')
+      toast.error(err.message || 'Failed to create note')
     }
   }
 
-  async function deleteTopic(topicId: string) {
+  const deleteTopic = async (topicId: string) => {
     if (userRole !== 'OWNER' && !settings.editorsCanDelete) {
-      toast.error('Only the notebook owner can delete topics.')
+      toast.error('Only the notebook owner can delete notes.')
       return
     }
 
     try {
-      await supabase
-        .from('topics')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', topicId)
+      await fetch(`/api/topics/${topicId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deleted_at: true }),
+      })
     } catch {
-      // Local fallback
+      // Fallback
     }
 
     const remaining = topics.filter(t => t.id !== topicId)
@@ -141,22 +201,32 @@ export function NotebookShell({
     if (selectedTopic?.id === topicId) {
       setSelectedTopic(remaining[0] || null)
     }
-    toast.success('Topic removed')
+    window.dispatchEvent(new CustomEvent('notebooks-updated'))
+    toast.success('Note removed')
   }
 
-  async function renameTopic(topicId: string, newTitle: string) {
+  const renameTopic = async (topicId: string, newTitle: string) => {
     if (!canEdit) return
 
     try {
-      await supabase.from('topics').update({ title: newTitle }).eq('id', topicId)
+      await fetch(`/api/topics/${topicId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      })
     } catch {
-      // Local fallback
+      // Fallback
     }
 
     setTopics(prev => prev.map(t => t.id === topicId ? { ...t, title: newTitle } : t))
     if (selectedTopic?.id === topicId) {
       setSelectedTopic(prev => prev ? { ...prev, title: newTitle } : null)
     }
+    window.dispatchEvent(new CustomEvent('notebooks-updated'))
+  }
+
+  const openSearch = () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
   }
 
   const filteredTopics = topics.filter(t =>
@@ -164,54 +234,71 @@ export function NotebookShell({
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'hsl(var(--background))' }}>
-      {/* Top Header Bar */}
-      <header style={{
-        height: 52,
-        borderBottom: '1px solid hsl(var(--border))',
-        background: 'hsl(var(--surface))',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 20px',
-        flexShrink: 0,
-      }}>
-        {/* Left: Back & Title */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="btn-ghost"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, fontSize: 13, color: 'hsl(var(--muted))' }}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--background)' }}>
+      {/* 1. Top Bar Navigation (Section 7) */}
+      <header className="notebook-topbar">
+        {/* Left: Breadcrumbs [Notebook logo] > [Notebook Name] > [Topic] */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <Link
+            href="/dashboard"
+            className="btn-ghost btn-sm"
+            style={{
+              padding: '4px 6px',
+              gap: 6,
+              color: 'var(--text-secondary)',
+              textDecoration: 'none',
+              borderRadius: 'var(--radius-sm)',
+            }}
           >
-            <ArrowLeft size={15} />
-            Dashboard
-          </button>
+            <NotebookLogo size={16} color="var(--accent)" />
+            <span style={{ fontSize: 13, fontWeight: 550 }}>Notebook</span>
+          </Link>
 
-          <div style={{ width: 1, height: 20, background: 'hsl(var(--border))' }} />
+          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>/</span>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: 6,
-              background: currentNotebook.color || '#6366f1',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 15,
-            }}>
-              {currentNotebook.icon || '📓'}
-            </div>
-            <span style={{ fontWeight: 700, fontSize: 14.5, color: 'hsl(var(--foreground))' }}>
-              {currentNotebook.name}
-            </span>
-            <span className={`badge badge-${userRole.toLowerCase()}`}>
-              {userRole}
-            </span>
-          </div>
+          <span style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}>
+            <span>{currentNotebook.icon || '📓'}</span>
+            <span>{currentNotebook.name}</span>
+          </span>
+
+          {selectedTopic && activeTab === 'note' && (
+            <>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>/</span>
+              <span style={{
+                fontSize: 13,
+                color: 'var(--text-secondary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {selectedTopic.title}
+              </span>
+            </>
+          )}
         </div>
 
-        {/* Center: Tabs */}
-        <div style={{ display: 'flex', gap: 4, background: 'hsl(var(--surface-2))', padding: 3, borderRadius: 8 }}>
+        {/* Center: Minimal Section Switcher */}
+        <div style={{
+          display: 'flex',
+          gap: 2,
+          padding: 2,
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+        }}>
           {[
-            { key: 'topics' as NotebookTab, label: 'Topics', icon: FileText },
-            { key: 'files' as NotebookTab, label: 'Files & Media', icon: FolderOpen },
+            { key: 'note' as NotebookTab, label: 'Note', icon: FileText },
+            { key: 'files' as NotebookTab, label: 'Files', icon: FolderOpen },
             { key: 'activity' as NotebookTab, label: 'Activity', icon: ActivityIcon },
             { key: 'settings' as NotebookTab, label: 'Settings', icon: SettingsIcon },
           ].map(tab => {
@@ -222,111 +309,189 @@ export function NotebookShell({
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '5px 12px', borderRadius: 6, border: 'none',
-                  fontSize: 12.5, fontWeight: active ? 600 : 500,
-                  background: active ? 'hsl(var(--background))' : 'transparent',
-                  color: active ? 'hsl(var(--foreground))' : 'hsl(var(--muted))',
-                  boxShadow: active ? 'var(--shadow-sm)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '4px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: 'none',
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
+                  background: active ? 'var(--background)' : 'transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                   cursor: 'pointer',
-                  transition: 'all 0.12s ease',
+                  transition: 'all var(--transition-fast)',
                 }}
               >
-                <Icon size={14} />
-                {tab.label}
+                <Icon size={12} />
+                <span>{tab.label}</span>
               </button>
             )
           })}
         </div>
 
-        {/* Right: Members & Share */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Member Avatars */}
-          <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8 }}>
-            {members.slice(0, 4).map((m, i) => (
+        {/* Right: Search, Collaborators Avatars, Share (Section 20) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={openSearch}
+            className="btn btn-secondary btn-sm"
+            style={{
+              height: 28,
+              padding: '0 8px',
+              fontSize: 12,
+              gap: 5,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <Search size={12} />
+            <kbd style={{ fontSize: 10, fontFamily: 'inherit', opacity: 0.7 }}>⌘K</kbd>
+          </button>
+
+          {/* Overlapping member / online presence avatars (Section 20 & 21) */}
+          <div className="avatar-stack" onClick={() => setShowShare(true)} style={{ cursor: 'pointer' }} title="Collaborators">
+            {onlineUsers.length > 0 ? (
+              onlineUsers.slice(0, 3).map((u) => (
+                <div
+                  key={u.id}
+                  className="avatar-stack-item"
+                  title={`${u.name} (Online)`}
+                  style={{ position: 'relative' }}
+                >
+                  {u.avatar_url ? (
+                    <img src={u.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    getInitials(u.name || 'U')
+                  )}
+                  <span
+                    style={{
+                      position: 'absolute',
+                      bottom: -1,
+                      right: -1,
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: 'var(--success)',
+                      border: '1.5px solid var(--background)',
+                    }}
+                  />
+                </div>
+              ))
+            ) : (
+              members.slice(0, 3).map((m) => (
+                <div
+                  key={m.id}
+                  className="avatar-stack-item"
+                  title={m.profile?.name || 'Member'}
+                >
+                  {m.profile?.avatar_url ? (
+                    <img src={m.profile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    getInitials(m.profile?.name || 'U')
+                  )}
+                </div>
+              ))
+            )}
+            {Math.max(members.length, onlineUsers.length) > 3 && (
               <div
-                key={m.id}
-                title={m.profile?.name || 'Member'}
-                style={{
-                  width: 26, height: 26, borderRadius: '50%',
-                  background: 'hsl(var(--brand))',
-                  border: '2px solid hsl(var(--surface))',
-                  marginLeft: i === 0 ? 0 : -8,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, color: 'white', fontWeight: 700,
-                  overflow: 'hidden',
-                }}
+                className="avatar-stack-item"
+                style={{ background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 10 }}
               >
-                {m.profile?.avatar_url ? (
-                  <img src={m.profile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  getInitials(m.profile?.name || 'U')
-                )}
+                +{Math.max(members.length, onlineUsers.length) - 3}
               </div>
-            ))}
+            )}
           </div>
 
           <button
             onClick={() => setShowShare(true)}
-            className="btn btn-primary"
-            style={{ padding: '6px 12px', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}
+            className="btn btn-primary btn-sm"
+            style={{ gap: 5, height: 28 }}
           >
-            <Share2 size={13} />
-            Share
+            <Share2 size={12} />
+            <span>Share</span>
+          </button>
+
+          <button
+            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            className="btn-ghost btn-icon"
+            style={{ width: 28, height: 28 }}
+            title="Toggle theme"
+          >
+            {resolvedTheme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
           </button>
         </div>
       </header>
 
-      {/* Main Workspace Body */}
+      {/* 2. Workspace Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {activeTab === 'topics' && (
+        {activeTab === 'note' && (
           <>
-            {/* Topics Sidebar */}
-            <aside style={{
-              width: 280,
-              flexShrink: 0,
-              borderRight: '1px solid hsl(var(--border))',
-              background: 'hsl(var(--surface))',
-              display: 'flex',
-              flexDirection: 'column',
-              height: '100%',
-            }}>
-              {/* Search topics */}
-              <div style={{ padding: '12px 14px', borderBottom: '1px solid hsl(var(--border))' }}>
+            {/* Collapsible Topics Sidebar (Section 9, 11) */}
+            <aside
+              style={{
+                width: sidebarCollapsed ? 0 : 250,
+                borderRight: sidebarCollapsed ? 'none' : '1px solid var(--border)',
+                background: 'var(--sidebar)',
+                display: sidebarCollapsed ? 'none' : 'flex',
+                flexDirection: 'column',
+                height: '100%',
+                transition: 'width var(--transition-normal)',
+                userSelect: 'none',
+              }}
+            >
+              {/* Search filter in notebook topics */}
+              <div style={{ padding: '10px 10px 6px', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ position: 'relative' }}>
-                  <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'hsl(var(--muted))' }} />
+                  <Search
+                    size={12}
+                    style={{
+                      position: 'absolute',
+                      left: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: 'var(--text-muted)',
+                    }}
+                  />
                   <input
                     value={topicSearch}
                     onChange={e => setTopicSearch(e.target.value)}
-                    placeholder="Search topics…"
+                    placeholder="Filter pages…"
                     style={{
-                      width: '100%', padding: '6px 8px 6px 28px',
-                      borderRadius: 6, border: '1px solid hsl(var(--border))',
-                      background: 'hsl(var(--background))', color: 'hsl(var(--foreground))',
-                      fontSize: 12.5, outline: 'none',
+                      width: '100%',
+                      padding: '5px 8px 5px 26px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border)',
+                      background: 'var(--background)',
+                      color: 'var(--text-primary)',
+                      fontSize: 12,
+                      outline: 'none',
+                      fontFamily: 'inherit',
                     }}
                   />
                 </div>
               </div>
 
               {/* Topics list */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
                 <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '4px 8px 8px', fontSize: 11.5, fontWeight: 600,
-                  color: 'hsl(var(--muted-light))', textTransform: 'uppercase', letterSpacing: '0.05em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '4px 8px 6px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
                 }}>
-                  <span>Topics ({topics.length})</span>
+                  <span>Pages ({topics.length})</span>
                   {canEdit && (
                     <button
                       onClick={createTopic}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: 'hsl(var(--brand))', display: 'flex', alignItems: 'center',
-                      }}
-                      title="Add Topic"
+                      className="btn-ghost"
+                      style={{ padding: 2, borderRadius: 4 }}
+                      title="New Note"
                     >
-                      <Plus size={15} />
+                      <Plus size={13} />
                     </button>
                   )}
                 </div>
@@ -334,7 +499,7 @@ export function NotebookShell({
                 <TopicList
                   topics={filteredTopics}
                   selectedTopicId={selectedTopic?.id || null}
-                  onSelect={topic => setSelectedTopic(topic)}
+                  onSelect={t => setSelectedTopic(t)}
                   onDelete={deleteTopic}
                   onRename={renameTopic}
                   canEdit={canEdit}
@@ -342,25 +507,66 @@ export function NotebookShell({
                 />
 
                 {filteredTopics.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '32px 16px', color: 'hsl(var(--muted))' }}>
-                    <p style={{ fontSize: 13, marginBottom: 12 }}>No topics found</p>
+                  <div style={{ textAlign: 'center', padding: '24px 12px', color: 'var(--text-muted)' }}>
+                    <p style={{ fontSize: 12.5, marginBottom: 8 }}>No pages found</p>
                     {canEdit && (
                       <button
                         onClick={createTopic}
-                        className="btn btn-primary"
-                        style={{ fontSize: 12, padding: '6px 14px' }}
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: 11.5 }}
                       >
-                        <Plus size={13} />
-                        Add Topic
+                        <Plus size={12} /> Add Page
                       </button>
                     )}
                   </div>
                 )}
               </div>
+
+              {/* Bottom toggle */}
+              <div style={{
+                padding: '8px 10px',
+                borderTop: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <button
+                  onClick={() => setSidebarCollapsed(true)}
+                  className="btn-ghost btn-sm"
+                  style={{ fontSize: 11.5, gap: 4, padding: '2px 6px' }}
+                >
+                  <PanelLeft size={12} />
+                  <span>Hide pages</span>
+                </button>
+
+                {canEdit && (
+                  <button
+                    onClick={createTopic}
+                    className="btn-ghost btn-sm"
+                    style={{ fontSize: 11.5, gap: 4, padding: '2px 6px' }}
+                  >
+                    <Plus size={12} />
+                    <span>New</span>
+                  </button>
+                )}
+              </div>
             </aside>
 
-            {/* Topic Editor Area */}
+            {/* Main Note Canvas */}
             <main style={{ flex: 1, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {sidebarCollapsed && (
+                <div style={{ padding: '8px 16px 0' }}>
+                  <button
+                    onClick={() => setSidebarCollapsed(false)}
+                    className="btn-ghost btn-sm"
+                    style={{ fontSize: 12, gap: 5 }}
+                  >
+                    <PanelLeft size={13} />
+                    <span>Show pages</span>
+                  </button>
+                </div>
+              )}
+
               {selectedTopic ? (
                 <TopicEditor
                   key={selectedTopic.id}
@@ -369,22 +575,34 @@ export function NotebookShell({
                   userRole={userRole}
                   currentUser={currentUser}
                   notebookId={currentNotebook.id}
+                  onTitleChange={newTitle => {
+                    setTopics(prev => prev.map(t => t.id === selectedTopic.id ? { ...t, title: newTitle } : t))
+                  }}
+                  onIconChange={newIcon => {
+                    setTopics(prev => prev.map(t => t.id === selectedTopic.id ? { ...t, icon: newIcon } : t))
+                  }}
                 />
               ) : (
                 <div style={{
-                  flex: 1, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  color: 'hsl(var(--muted))', gap: 12,
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text-muted)',
+                  gap: 12,
                 }}>
-                  <div style={{ fontSize: 44 }}>📄</div>
-                  <div style={{ fontWeight: 600, fontSize: 16 }}>Select or create a topic</div>
-                  <p style={{ fontSize: 13.5, maxWidth: 300, textAlign: 'center' }}>
-                    Choose a topic from the sidebar or click &ldquo;+&rdquo; to start writing.
+                  <div style={{ fontSize: 36 }}>✦</div>
+                  <div style={{ fontSize: 15, fontWeight: 550, color: 'var(--text-primary)' }}>
+                    Nothing here yet
+                  </div>
+                  <p style={{ fontSize: 13, maxWidth: 300, textAlign: 'center' }}>
+                    Create your first note to get started.
                   </p>
                   {canEdit && (
-                    <button onClick={createTopic} className="btn btn-primary" style={{ marginTop: 8 }}>
-                      <Plus size={16} />
-                      Create New Topic
+                    <button onClick={createTopic} className="btn btn-primary btn-sm">
+                      <Plus size={13} />
+                      <span>New Note</span>
                     </button>
                   )}
                 </div>
@@ -393,6 +611,7 @@ export function NotebookShell({
           </>
         )}
 
+        {/* Files Tab */}
         {activeTab === 'files' && (
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <FilesTab
@@ -403,12 +622,14 @@ export function NotebookShell({
           </div>
         )}
 
+        {/* Activity Tab */}
         {activeTab === 'activity' && (
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            <ActivityTab notebookName={currentNotebook.name} />
+            <ActivityTab notebookId={currentNotebook.id} notebookName={currentNotebook.name} />
           </div>
         )}
 
+        {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <NotebookSettingsTab
@@ -419,7 +640,7 @@ export function NotebookShell({
         )}
       </div>
 
-      {/* Share Modal */}
+      {/* Share Modal (Section 20) */}
       {showShare && (
         <ShareModal
           notebook={currentNotebook}

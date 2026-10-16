@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node tests/auth.test.mjs && node tests/security_and_rls.test.mjs",
     "start:hocuspocus": "node server/hocuspocus.mjs"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.10",
     "@hocuspocus/provider": "^4.7.0",
     "@hocuspocus/server": "^4.7.0",
     "@radix-ui/react-avatar": "^1.2.7",

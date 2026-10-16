@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   UploadCloud, FileText, Image as ImageIcon, Video, Music, Code,
-  Download, Trash2, Eye, X, CheckCircle, Search
+  Download, Trash2, Eye, X, CheckCircle, Search, Loader2
 } from 'lucide-react'
 import { can } from '@/lib/permissions'
 import toast from 'react-hot-toast'
@@ -15,76 +15,9 @@ interface FilesTabProps {
   settings: NotebookSettings
 }
 
-const INITIAL_FILES: NotebookFile[] = [
-  {
-    id: 'file-1',
-    notebook_id: 'nb-daa',
-    uploaded_by: 'user-1',
-    original_name: 'algorithms_cheatsheet.pdf',
-    storage_key: 'files/algorithms_cheatsheet.pdf',
-    mime_declared: 'application/pdf',
-    size: 2450000,
-    status: 'ready',
-    preview_url: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80',
-    created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
-    uploader: {
-      id: 'user-1',
-      google_id: null,
-      name: 'Vedant',
-      email: 'vedant@example.com',
-      avatar_url: null,
-      created_at: '',
-      updated_at: '',
-      last_active_at: null,
-    },
-  },
-  {
-    id: 'file-2',
-    notebook_id: 'nb-daa',
-    uploaded_by: 'user-2',
-    original_name: 'graph_traversal_diagram.png',
-    storage_key: 'files/graph_traversal_diagram.png',
-    mime_declared: 'image/png',
-    size: 1120000,
-    status: 'ready',
-    preview_url: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&auto=format&fit=crop&q=80',
-    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-    uploader: {
-      id: 'user-2',
-      google_id: null,
-      name: 'Alex Chen',
-      email: 'alex@example.com',
-      avatar_url: null,
-      created_at: '',
-      updated_at: '',
-      last_active_at: null,
-    },
-  },
-  {
-    id: 'file-3',
-    notebook_id: 'nb-daa',
-    uploaded_by: 'user-1',
-    original_name: 'quick_sort_benchmark.ts',
-    storage_key: 'files/quick_sort_benchmark.ts',
-    mime_declared: 'text/typescript',
-    size: 4200,
-    status: 'ready',
-    created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-    uploader: {
-      id: 'user-1',
-      google_id: null,
-      name: 'Vedant',
-      email: 'vedant@example.com',
-      avatar_url: null,
-      created_at: '',
-      updated_at: '',
-      last_active_at: null,
-    },
-  },
-]
-
 export function FilesTab({ notebookId, userRole, settings }: FilesTabProps) {
-  const [files, setFiles] = useState<NotebookFile[]>(INITIAL_FILES)
+  const [files, setFiles] = useState<NotebookFile[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [previewFile, setPreviewFile] = useState<NotebookFile | null>(null)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
@@ -93,8 +26,27 @@ export function FilesTab({ notebookId, userRole, settings }: FilesTabProps) {
   const canDownload = can(userRole, 'file:download', settings)
   const canDelete = can(userRole, 'file:delete', settings)
 
+  const loadFiles = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await fetch(`/api/notebooks/${notebookId}/files`)
+      const data = await res.json()
+      if (res.ok && data.files) {
+        setFiles(data.files)
+      }
+    } catch (err) {
+      console.error('[FilesTab load error]', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [notebookId])
+
+  useEffect(() => {
+    loadFiles()
+  }, [loadFiles])
+
   function formatBytes(bytes: number) {
-    if (bytes === 0) return '0 B'
+    if (!bytes || bytes === 0) return '0 B'
     const k = 1024
     const sizes = ['B', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
@@ -102,265 +54,269 @@ export function FilesTab({ notebookId, userRole, settings }: FilesTabProps) {
   }
 
   function getFileIcon(mime: string) {
-    if (mime.startsWith('image/')) return <ImageIcon size={20} style={{ color: '#ec4899' }} />
-    if (mime.startsWith('video/')) return <Video size={20} style={{ color: '#8b5cf6' }} />
-    if (mime.startsWith('audio/')) return <Music size={20} style={{ color: '#f59e0b' }} />
-    if (mime.includes('typescript') || mime.includes('javascript') || mime.includes('json')) return <Code size={20} style={{ color: '#10b981' }} />
-    return <FileText size={20} style={{ color: '#6366f1' }} />
+    if (mime.startsWith('image/')) return <ImageIcon size={18} style={{ color: 'var(--accent)' }} />
+    if (mime.startsWith('video/')) return <Video size={18} style={{ color: '#8b5cf6' }} />
+    if (mime.startsWith('audio/')) return <Music size={18} style={{ color: '#f59e0b' }} />
+    if (mime.includes('typescript') || mime.includes('javascript') || mime.includes('json'))
+      return <Code size={18} style={{ color: 'var(--success)' }} />
+    return <FileText size={18} style={{ color: 'var(--accent)' }} />
   }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const uploadedFiles = e.target.files
     if (!uploadedFiles || uploadedFiles.length === 0) return
 
-    setUploadProgress(10)
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev === null || prev >= 100) {
-          clearInterval(interval)
-          setTimeout(() => setUploadProgress(null), 800)
-          return 100
-        }
-        return prev + 25
+    const file = uploadedFiles[0]
+    setUploadProgress(20)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      setUploadProgress(50)
+      const res = await fetch(`/api/notebooks/${notebookId}/files`, {
+        method: 'POST',
+        body: formData,
       })
-    }, 200)
 
-    const fileList = Array.from(uploadedFiles)
-    fileList.forEach(f => {
-      const newFile: NotebookFile = {
-        id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        notebook_id: notebookId,
-        uploaded_by: 'current-user',
-        original_name: f.name,
-        storage_key: `files/${f.name}`,
-        mime_declared: f.type || 'application/octet-stream',
-        size: f.size,
-        status: 'ready',
-        preview_url: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
-        created_at: new Date().toISOString(),
+      setUploadProgress(90)
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Upload failed')
       }
-      setFiles(prev => [newFile, ...prev])
-    })
 
-    toast.success(`Uploaded ${fileList.length} file(s)`)
+      setUploadProgress(100)
+      setTimeout(() => setUploadProgress(null), 500)
+
+      setFiles(prev => [data.file, ...prev])
+      toast.success(`${file.name} uploaded`)
+    } catch (err: any) {
+      setUploadProgress(null)
+      toast.error(err.message || 'Failed to upload file')
+    } finally {
+      e.target.value = ''
+    }
   }
 
-  function handleDeleteFile(fileId: string) {
+  async function handleDeleteFile(fileId: string) {
     if (!canDelete) {
-      toast.error('Permission denied to delete files')
+      toast.error('You do not have permission to delete files.')
       return
     }
-    setFiles(prev => prev.filter(f => f.id !== fileId))
-    toast.success('File deleted')
-  }
 
-  function handleDownload(file: NotebookFile) {
-    if (!canDownload) {
-      toast.error('Viewer downloads are disabled by the notebook owner.')
-      return
+    try {
+      const res = await fetch(`/api/notebooks/${notebookId}/files/${fileId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to delete file')
+      }
+
+      setFiles(prev => prev.filter(f => f.id !== fileId))
+      if (previewFile?.id === fileId) {
+        setPreviewFile(null)
+      }
+      toast.success('File deleted')
+    } catch (err: any) {
+      toast.error(err.message || 'Could not delete file')
     }
-    toast.success(`Downloading ${file.original_name}…`)
   }
 
-  const filtered = files.filter(f =>
+  const filteredFiles = files.filter(f =>
     f.original_name.toLowerCase().includes(search.toLowerCase())
   )
 
   return (
-    <div style={{ padding: '32px 48px', maxWidth: 1080, margin: '0 auto', width: '100%' }}>
+    <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Notebook Files & Media</h2>
-          <p style={{ fontSize: 13.5, color: 'hsl(var(--muted))' }}>
-            Store and preview reference documents, diagrams, PDFs, and assets attached to this notebook.
+          <h2 style={{ fontSize: 18, fontWeight: 650, margin: '0 0 4px', color: 'var(--text-primary)' }}>
+            Files & Attachments
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            {files.length} {files.length === 1 ? 'file' : 'files'} securely stored in cloud
           </p>
         </div>
 
         {canUpload && (
-          <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-            <UploadCloud size={16} />
-            Upload File
-            <input type="file" multiple onChange={handleFileUpload} style={{ display: 'none' }} />
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 34,
+              padding: '0 14px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--accent)',
+              color: '#FFFFFF',
+              fontSize: 13,
+              fontWeight: 550,
+              cursor: 'pointer',
+              transition: 'opacity var(--transition-fast)',
+            }}
+          >
+            <UploadCloud size={14} />
+            <span>Upload file</span>
+            <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} />
           </label>
         )}
       </div>
 
-      {/* Upload progress banner */}
+      {/* Progress Indicator */}
       {uploadProgress !== null && (
-        <div style={{
-          marginBottom: 20, padding: '12px 16px', borderRadius: 10,
-          background: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 6 }}>
-            <span style={{ fontWeight: 600 }}>Uploading…</span>
+        <div style={{ marginBottom: 20, padding: 12, borderRadius: 'var(--radius-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+            <span>Uploading to Supabase Storage…</span>
             <span>{uploadProgress}%</span>
           </div>
-          <div style={{ width: '100%', height: 6, background: 'hsl(var(--surface-2))', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'hsl(var(--brand))', transition: 'width 0.2s ease' }} />
+          <div style={{ height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${uploadProgress}%`, background: 'var(--accent)', transition: 'width 0.2s ease' }} />
           </div>
         </div>
       )}
 
-      {/* Search */}
-      <div style={{ position: 'relative', marginBottom: 20 }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'hsl(var(--muted))' }} />
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search files in this notebook…"
-          className="input"
-          style={{ paddingLeft: 36 }}
-        />
-      </div>
+      {/* Search Bar */}
+      {files.length > 0 && (
+        <div style={{ position: 'relative', marginBottom: 16 }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+          <input
+            type="text"
+            placeholder="Search attachments…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: '100%',
+              height: 34,
+              padding: '0 12px 0 32px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border)',
+              background: 'var(--background)',
+              color: 'var(--text-primary)',
+              fontSize: 13,
+              outline: 'none',
+            }}
+          />
+        </div>
+      )}
 
-      {/* Files Grid */}
-      {filtered.length === 0 ? (
-        <div style={{
-          textAlign: 'center', padding: '64px 20px',
-          border: '2px dashed hsl(var(--border))', borderRadius: 16,
-          background: 'hsl(var(--surface) / 0.5)',
-        }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📁</div>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No files uploaded yet</h3>
-          <p style={{ fontSize: 13, color: 'hsl(var(--muted))', maxWidth: 360, margin: '0 auto 16px' }}>
-            Upload research papers, source code, lecture slides, or diagrams to attach them to this notebook.
+      {/* Loading state */}
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: 8, color: 'var(--text-muted)' }}>
+          <Loader2 size={16} className="animate-spin" />
+          <span style={{ fontSize: 13 }}>Loading files…</span>
+        </div>
+      ) : filteredFiles.length === 0 ? (
+        /* Empty State */
+        <div style={{ textAlign: 'center', padding: '60px 20px', border: '1px dashed var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <div style={{ fontSize: 24, marginBottom: 8 }}>📎</div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px', color: 'var(--text-primary)' }}>
+            No attachments yet
+          </h3>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px' }}>
+            Upload PDFs, documents, or images to share with notebook collaborators.
           </p>
           {canUpload && (
-            <label className="btn btn-primary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              <UploadCloud size={15} />
-              Choose files
-              <input type="file" multiple onChange={handleFileUpload} style={{ display: 'none' }} />
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+              }}
+            >
+              <UploadCloud size={14} />
+              <span>Choose a file</span>
+              <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} />
             </label>
           )}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-          {filtered.map(file => (
+        /* File List */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filteredFiles.map(file => (
             <div
               key={file.id}
               style={{
-                background: 'hsl(var(--surface))',
-                border: '1px solid hsl(var(--border))',
-                borderRadius: 12,
-                padding: '16px',
                 display: 'flex',
-                flexDirection: 'column',
+                alignItems: 'center',
                 justifyContent: 'space-between',
-                transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--background)',
+                border: '1px solid var(--border)',
+                transition: 'background var(--transition-fast)',
               }}
             >
-              <div>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 40, height: 40, borderRadius: 8,
-                    background: 'hsl(var(--surface-2))',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}>
-                    {getFileIcon(file.mime_declared)}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                {getFileIcon(file.mime_declared)}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 550, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {file.original_name}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontWeight: 600, fontSize: 13.5,
-                      color: 'hsl(var(--foreground))',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }} title={file.original_name}>
-                      {file.original_name}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'hsl(var(--muted))', marginTop: 2 }}>
-                      {formatBytes(file.size)} • {file.uploader?.name || 'Vedant'}
-                    </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    {formatBytes(file.size)} • Uploaded {new Date(file.created_at).toLocaleDateString()}
                   </div>
                 </div>
-
-                {file.preview_url && file.mime_declared.startsWith('image/') && (
-                  <div
-                    onClick={() => setPreviewFile(file)}
-                    style={{
-                      height: 120, borderRadius: 8, overflow: 'hidden',
-                      marginBottom: 12, cursor: 'pointer', background: 'hsl(var(--surface-2))',
-                    }}
-                  >
-                    <img src={file.preview_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </div>
-                )}
               </div>
 
-              {/* Actions */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                paddingTop: 10, borderTop: '1px solid hsl(var(--border))',
-              }}>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {file.preview_url && (
-                    <button
-                      onClick={() => setPreviewFile(file)}
-                      className="btn-ghost"
-                      style={{ padding: '4px 8px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <Eye size={13} /> Preview
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleDownload(file)}
-                    className="btn-ghost"
-                    style={{ padding: '4px 8px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {file.preview_url && canDownload && (
+                  <a
+                    href={file.preview_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download={file.original_name}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '4px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border)',
+                      background: 'var(--surface)',
+                      color: 'var(--text-secondary)',
+                      fontSize: 12,
+                      textDecoration: 'none',
+                    }}
                   >
-                    <Download size={13} /> Download
-                  </button>
-                </div>
+                    <Download size={12} />
+                    <span>Download</span>
+                  </a>
+                )}
 
                 {canDelete && (
                   <button
                     onClick={() => handleDeleteFile(file.id)}
-                    className="btn-ghost"
-                    style={{ padding: 4, color: 'hsl(0 84% 60%)' }}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: 'var(--radius-sm)',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                    }}
                     title="Delete file"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={13} />
                   </button>
                 )}
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* File Preview Modal */}
-      {previewFile && (
-        <div className="modal-overlay animate-fade-in" onClick={() => setPreviewFile(null)}>
-          <div
-            className="modal animate-scale-in"
-            style={{ maxWidth: 700, padding: 20 }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {getFileIcon(previewFile.mime_declared)}
-                <span style={{ fontWeight: 700, fontSize: 15 }}>{previewFile.original_name}</span>
-              </div>
-              <button onClick={() => setPreviewFile(null)} className="btn-ghost" style={{ padding: 4 }}>
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ textAlign: 'center', maxHeight: 440, overflow: 'auto', borderRadius: 8, background: 'hsl(var(--surface-2))', padding: 12 }}>
-              {previewFile.mime_declared.startsWith('image/') ? (
-                <img src={previewFile.preview_url} alt="" style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain', borderRadius: 6 }} />
-              ) : (
-                <div style={{ padding: '40px 20px', color: 'hsl(var(--muted))' }}>
-                  <p style={{ fontSize: 14 }}>Preview not supported for this format.</p>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
-              <button onClick={() => handleDownload(previewFile)} className="btn btn-primary" style={{ fontSize: 13 }}>
-                <Download size={14} /> Download File
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>

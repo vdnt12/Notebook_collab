@@ -3,8 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Star, MoreHorizontal, Trash2, Edit3, Users } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
-import { formatRelativeTime, getInitials } from '@/lib/utils'
+import { formatRelativeTime } from '@/lib/utils'
 import toast from 'react-hot-toast'
 import type { Notebook } from '@/types'
 
@@ -18,18 +17,18 @@ export function NotebookCard({ notebook, onDeleted, onUpdated }: NotebookCardPro
   const router = useRouter()
   const [isStarred, setIsStarred] = useState(notebook.is_starred)
   const [showMenu, setShowMenu] = useState(false)
-  const supabase = createClient()
 
   async function handleStar(e: React.MouseEvent) {
     e.stopPropagation()
     const newStarred = !isStarred
     setIsStarred(newStarred)
 
-    if (newStarred) {
-      await supabase.from('starred_notebooks').insert({ notebook_id: notebook.id })
-    } else {
-      await supabase.from('starred_notebooks').delete()
-        .match({ notebook_id: notebook.id })
+    try {
+      await fetch(`/api/notebooks/${notebook.id}/star`, {
+        method: newStarred ? 'POST' : 'DELETE',
+      })
+    } catch {
+      setIsStarred(!newStarred)
     }
   }
 
